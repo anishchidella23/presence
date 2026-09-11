@@ -1,0 +1,15 @@
+# Face detection + recognition (ArcFace / buffalo_l via ONNX Runtime)
+insightface==2.0
+onnxruntime==1.30.0
+
+# Facial landmark mesh for liveness (EAR, head pose, mouth aspect ratio)
+mediapipe==1.0.1
+
+# Imaging / math
+opencv-python==5.0.0.93
+numpy==2.5.3
+
+# Web kiosk
+fastapi==0.121.2
+uvicorn[standard]==0.38.0
+python-multipart==0.0.20

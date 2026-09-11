@@ -1,0 +1,22 @@
+# Virtualenv
+.venv/
+__pycache__/
+*.py[cod]
+
+# Enrolled faces and captured frames are personal data - never commit
+data/faces/
+data/captures/
+data/*.db
+data/*.db-journal
+
+# Downloaded model weights (~300MB, fetched on first run)
+models/
+.insightface/
+
+# Evaluation media
+eval/media/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
