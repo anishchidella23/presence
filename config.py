@@ -60,8 +60,13 @@ MIN_MATCH_MARGIN = 0.08
 # strong edge variation; motion-blurred ones do not.
 #
 # This value is meaningless as an absolute - it scales with crop resolution
-# and camera. It MUST be calibrated per camera (tools/calibrate.py).
-BLUR_THRESHOLD = 60.0
+# and camera, so it MUST be recalibrated per camera (tools/calibrate.py).
+#
+# Measured over 220 frames of 720p handheld webcam footage: median 71,
+# 5th percentile 30. An earlier guess of 60 would have rejected roughly half
+# of ordinary frames. A blur gate that is too eager is worse than one slightly
+# too lax, because a rejected frame stalls the user without telling them why.
+BLUR_THRESHOLD = 30.0
 
 
 # --- Temporal smoothing --------------------------------------------------
@@ -80,3 +85,58 @@ TRACK_IOU_THRESHOLD = 0.30
 # How many consecutive frames a track may go unmatched before it is dropped.
 # Tolerates brief detector dropouts without losing accumulated liveness state.
 TRACK_MAX_AGE = 15
+
+
+# --- Liveness geometry ---------------------------------------------------
+
+# Landmarks sampled around each eye keypoint to measure openness. Enough to
+# span the eyelids and corners without reaching into the brow or cheek.
+EYE_LANDMARK_COUNT = 10
+
+# Frames of neutral geometry collected before challenges begin. Gathered
+# during identification, so this costs the user no extra waiting.
+BASELINE_SAMPLES = 12
+
+# Blink thresholds are fractions of a person's own resting eye openness, not
+# absolute values: resting openness varies enough between people that a fixed
+# cutoff reads some faces as permanently mid-blink.
+#
+# Measured: resting openness 0.351, a real blink bottoms out at 0.117 - a third
+# of resting. 0.65 sits comfortably between them.
+#
+# The gap between the two makes the test hysteretic - eyes must fall below the
+# close ratio and then rise past the higher open ratio to count as one blink,
+# so a value hovering at the boundary cannot register a burst of phantom
+# blinks.
+BLINK_CLOSE_RATIO = 0.65
+BLINK_OPEN_RATIO = 0.85
+
+# Mouth width must exceed this multiple of the person's neutral width to count
+# as a smile.
+#
+# PROVISIONAL. Calibration footage reached 1.21x neutral, but it contains
+# speech and no deliberate smiling, so the ceiling of ordinary mouth movement
+# is not yet separated from a real smile. Set above the observed range for now;
+# needs a labelled pass to tighten.
+SMILE_RISE_RATIO = 1.18
+
+# Degrees of yaw that count as a deliberate head turn.
+#
+# Measured: incidental movement while seated stays within +/-7 degrees, while a
+# deliberate turn reaches 40. 18 sits clearly between the two.
+YAW_TURN_DEGREES = 18.0
+
+
+# --- Challenge sequence --------------------------------------------------
+
+# How many challenges must be passed. Each one multiplies the difficulty of
+# anticipating the sequence in advance, which is what defeats replayed video.
+CHALLENGE_COUNT = 2
+
+# Seconds allowed per challenge before the attempt fails. Long enough to read
+# the prompt and respond, short enough that cycling through poses hoping to
+# hit the right one is not viable.
+CHALLENGE_TIMEOUT_S = 10.0
+
+# Upper bound on the randomised blink repeat count.
+MAX_BLINK_REPEATS = 3

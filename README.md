@@ -42,7 +42,16 @@ survives between frames.
 **Liveness is a randomised challenge, not a blink.** Blink detection is
 defeated by replaying a video of someone blinking. A challenge chosen at random
 at request time — look left, blink twice, smile — cannot be satisfied by
-pre-recorded footage.
+pre-recorded footage. Three rules give the randomness teeth: evidence only
+counts after the prompt appears, the face must return to neutral between
+challenges so one held pose cannot satisfy two, and every challenge has a
+deadline so an attacker cannot cycle through poses until one lands.
+
+**Liveness thresholds are relative to each person, not global.** Resting eye
+openness varies enough between people that a fixed cutoff reads some faces as
+permanently mid-blink. Each person's resting geometry is measured while their
+identity is being confirmed — dead time the system already spends — and blink
+and smile tests are expressed as fractions of it.
 
 **Multiple reference images per person.** A single enrolment photo pins an
 identity to one pose and one lighting condition, and everything that deviates
@@ -51,10 +60,10 @@ from it scores lower. Enrolment captures several frames across poses.
 ## Status
 
 Working: detection, embedding, gallery matching with the margin rule,
-multi-face tracking with stable IDs, quality gates, temporal smoothing.
+multi-face tracking with stable IDs, quality gates, temporal smoothing,
+randomised challenge-response liveness, and threshold calibration.
 
-In progress: liveness challenges, SQLite persistence, the web kiosk, and the
-evaluation harness.
+In progress: SQLite persistence, the web kiosk, and the evaluation harness.
 
 ## Running it
 
@@ -93,14 +102,21 @@ Model weights (~300MB) download automatically on first run.
 ```
 
 The suite covers the decision logic — matching, rejection, tracking, smoothing
-— using synthetic embeddings, so it runs in a fraction of a second and needs no
-model or camera.
+and the liveness state machine — using synthetic embeddings and geometry, so it
+runs in a fraction of a second and needs no model or camera.
+
+The liveness tests are written around the properties an attacker would try to
+violate rather than the happy path: that a blink recorded before the prompt
+does not count, that one long blink counts once rather than many times, that a
+single held pose cannot satisfy two consecutive challenges, and that the
+sequence is genuinely unpredictable.
 
 ## Layout
 
 ```
 config.py     every tunable threshold, in one place
-engine/       detection, matching, tracking, gating — no UI
+engine/       detection, matching, tracking, gating, liveness — no UI
+tools/        threshold calibration
 server/       FastAPI kiosk: websocket frames in, verdicts out
 web/          browser UI, canvas overlay
 eval/         labelled set and metrics
@@ -109,13 +125,29 @@ tests/        decision-logic tests
 
 ## Calibration
 
-Thresholds in `config.py` marked PROVISIONAL are starting points, not measured
-values. The blur threshold in particular is meaningless as an absolute number:
-Laplacian variance scales with crop resolution and camera, so it has to be
-calibrated per setup. The evaluation harness replaces these with measured
-values.
+Several thresholds are meaningless as absolute numbers. Laplacian variance
+scales with crop resolution and camera; resting eye openness varies from person
+to person. A value copied from a paper describes that paper's camera and
+subjects, not yours.
+
+```bash
+./.venv/bin/python -m tools.calibrate --camera 0 --seconds 30
+```
+
+Sample yourself at a normal distance, blinking naturally and moving enough to
+produce some genuinely blurred frames. It reports the distribution of every
+measurement and recommends thresholds from what it saw.
+
+This matters more than it sounds. The blur threshold was initially guessed at
+60; measured against real footage the median frame scores 71, so that guess
+would have rejected roughly half of all normal frames. Values still marked
+PROVISIONAL in `config.py` have not yet been separated from ordinary movement
+by a labelled pass.
 
 ## Built with
 
-InsightFace (RetinaFace detection, ArcFace embeddings) on ONNX Runtime,
-MediaPipe face mesh for liveness geometry, OpenCV, FastAPI.
+InsightFace on ONNX Runtime, OpenCV, FastAPI.
+
+The buffalo_l pack supplies detection, 512-d embeddings, dense landmarks and
+head pose from one forward pass, so liveness geometry costs no extra inference
+and needs no second landmark library.

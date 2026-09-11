@@ -21,7 +21,9 @@ class FaceState(str, Enum):
     UNKNOWN = "unknown"            # embedded fine, matched nobody
     CONFIRMING = "confirming"      # candidate identity, not yet stable
     RECOGNISED = "recognised"      # identity stable, liveness not yet proven
+    CHALLENGED = "challenged"      # answering a liveness challenge
     VERIFIED = "verified"          # passed liveness, logged
+    SPOOF_SUSPECTED = "spoof_suspected"   # failed the liveness challenge
 
 
 @dataclass
@@ -32,6 +34,8 @@ class Detection:
     det_score: float
     keypoints: np.ndarray             # (5, 2) eyes, nose, mouth corners
     embedding: np.ndarray | None = None   # (512,) L2-normalised, None if gated out
+    landmarks_2d: np.ndarray | None = None   # (106, 2) dense landmarks for liveness
+    pose: np.ndarray | None = None           # (pitch, yaw, roll) in degrees
 
     @property
     def width(self) -> int:
@@ -104,6 +108,13 @@ class FaceResult:
     required_matches: int = 0
     detail: str = ""                  # short human-readable status line
 
+    # Liveness
+    prompt: str = ""                  # the challenge to show the user
+    challenges_passed: int = 0
+    challenges_total: int = 0
+    eye_openness: float = 0.0
+    yaw: float = 0.0
+
     def to_dict(self) -> dict:
         """JSON-safe form sent over the websocket to the browser."""
         return {
@@ -119,6 +130,11 @@ class FaceResult:
             "matches_in_window": self.matches_in_window,
             "required_matches": self.required_matches,
             "detail": self.detail,
+            "prompt": self.prompt,
+            "challenges_passed": self.challenges_passed,
+            "challenges_total": self.challenges_total,
+            "eye_openness": round(self.eye_openness, 3),
+            "yaw": round(self.yaw, 1),
         }
 
 

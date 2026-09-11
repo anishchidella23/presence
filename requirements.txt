@@ -1,9 +1,8 @@
-# Face detection + recognition (ArcFace / buffalo_l via ONNX Runtime)
+# Face detection, recognition, landmarks and head pose.
+# The buffalo_l pack bundles all four, so liveness geometry comes out of the
+# same forward pass as the embedding - no second landmark library needed.
 insightface==2.0
 onnxruntime==1.30.0
-
-# Facial landmark mesh for liveness (EAR, head pose, mouth aspect ratio)
-mediapipe==1.0.1
 
 # Imaging / math
 opencv-python==5.0.0.93

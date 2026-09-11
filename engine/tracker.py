@@ -23,6 +23,7 @@ from config import (
     TRACK_IOU_THRESHOLD,
     TRACK_MAX_AGE,
 )
+from engine.challenge import ChallengeSession
 from engine.types import Detection
 
 
@@ -64,6 +65,12 @@ class Track:
     # Set once this track has been logged, so presence is recorded once per
     # visit rather than once per frame.
     logged: bool = False
+
+    # Liveness session, created when this track's identity first becomes
+    # stable. Living on the track means it is discarded when the track is, so
+    # someone who leaves and returns is challenged afresh rather than
+    # inheriting progress from their last visit.
+    challenge: "ChallengeSession | None" = None
 
     def observe(self, detection: Detection, name: str | None) -> None:
         self.bbox = detection.bbox

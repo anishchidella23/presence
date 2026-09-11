@@ -58,10 +58,15 @@ class FaceDetector:
             h, w = frame_bgr.shape[:2]
             bbox = (max(0, x1), max(0, y1), min(w, x2), min(h, y2))
 
+            landmarks = face.get("landmark_2d_106")
+            pose = face.get("pose")
+
             det = Detection(
                 bbox=bbox,
                 det_score=float(face.det_score),
                 keypoints=np.asarray(face.kps, dtype=np.float32),
+                landmarks_2d=None if landmarks is None else np.asarray(landmarks, dtype=np.float32),
+                pose=None if pose is None else np.asarray(pose, dtype=np.float32),
             )
 
             if det.det_score < MIN_DETECTION_SCORE or det.size < MIN_FACE_PIXELS:
