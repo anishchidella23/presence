@@ -89,9 +89,19 @@ TRACK_MAX_AGE = 15
 
 # --- Liveness geometry ---------------------------------------------------
 
-# Landmarks sampled around each eye keypoint to measure openness. Enough to
-# span the eyelids and corners without reaching into the brow or cheek.
-EYE_LANDMARK_COUNT = 10
+# Eye contour indices within the 106-point landmark set. Determined by
+# measuring which indices sit consistently nearest the detector's eye
+# keypoints across a few hundred frames, rather than trusting a published map.
+LEFT_EYE_LANDMARKS = list(range(33, 43))
+RIGHT_EYE_LANDMARKS = list(range(87, 97))
+
+# Eyelid separation over eye width. Measured across 289 detections this sits
+# at 0.119 with a ceiling of 0.133, so anything approaching this bound means
+# the landmark fit has collapsed and the frame is discarded rather than
+# trusted. A collapsed reading folded into a resting baseline would raise the
+# "eyes open" bar past what a real eye can reach, leaving the person unable to
+# complete any challenge.
+MAX_PLAUSIBLE_EYE_OPENNESS = 0.35
 
 # Frames of neutral geometry collected before challenges begin. Gathered
 # during identification, so this costs the user no extra waiting.
@@ -140,3 +150,38 @@ CHALLENGE_TIMEOUT_S = 10.0
 
 # Upper bound on the randomised blink repeat count.
 MAX_BLINK_REPEATS = 3
+
+# Pause before a failed attempt restarts. A person who misread the prompt or
+# looked away should get another go without walking off and returning, but not
+# so instantly that a failure flashes past unread.
+#
+# The retry draws a fresh random sequence, so repeated attempts give an
+# attacker no additional information about what will be asked.
+CHALLENGE_RETRY_S = 3.0
+
+
+# --- Persistence ---------------------------------------------------------
+
+# How long before the same person may be logged again. A kiosk sees someone
+# for many consecutive frames and often several times a day; without a window
+# the log fills with duplicates of one arrival.
+#
+# 8 hours covers a working day, so arriving in the morning and passing the
+# camera again after lunch records one presence, not two.
+DEDUPE_WINDOW_HOURS = 8
+
+# Minimum reference images required to enrol someone. One photo pins an
+# identity to a single pose and lighting condition; several across poses is
+# the cheapest accuracy improvement available.
+MIN_ENROLMENT_IMAGES = 3
+
+
+# --- Server --------------------------------------------------------------
+
+HOST = "127.0.0.1"
+PORT = 8000
+
+# Longest edge the browser downscales to before sending a frame. Recognition
+# works from a face of roughly 100px, so sending full resolution spends
+# bandwidth and inference time on detail that is discarded anyway.
+STREAM_MAX_EDGE = 720

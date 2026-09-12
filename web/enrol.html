@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presence — Enrol</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Presence <span>· enrol</span></h1>
+  <nav>
+    <a href="/">Kiosk</a>
+    <a href="/enrol" class="active">Enrol</a>
+    <a href="/history">History</a>
+  </nav>
+</header>
+
+<main>
+  <div class="panel">
+    <h2>Add someone</h2>
+    <p class="hint">
+      Capture happens across several head positions. One reference photo pins an
+      identity to a single pose and lighting condition, and anything that
+      deviates from it scores lower — several poses is the cheapest accuracy
+      improvement available.
+    </p>
+    <div class="row">
+      <input type="text" id="name" placeholder="Name" autocomplete="off">
+      <button id="start">Start capture</button>
+    </div>
+    <div class="message" id="message" hidden></div>
+    <div class="thumbs" id="thumbs"></div>
+  </div>
+
+  <div class="stage">
+    <video id="video" playsinline muted></video>
+    <div class="prompt" id="prompt" hidden></div>
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <h2>Enrolled</h2>
+    <table id="roster"><tbody></tbody></table>
+    <div class="empty" id="rosterEmpty" hidden>Nobody is enrolled yet.</div>
+  </div>
+</main>
+
+<script type="module">
+import { startCamera, captureFrame } from "/static/camera.js";
+
+const POSES = [
+  "Look straight at the camera",
+  "Turn your head slightly left",
+  "Turn your head slightly right",
+  "Tilt your chin up a little",
+  "Look straight ahead again",
+];
+
+const video = document.getElementById("video");
+const promptEl = document.getElementById("prompt");
+const nameInput = document.getElementById("name");
+const startButton = document.getElementById("start");
+const messageEl = document.getElementById("message");
+const thumbs = document.getElementById("thumbs");
+
+let maxEdge = 720;
+
+function say(text, ok = true) {
+  messageEl.textContent = text;
+  messageEl.className = "message " + (ok ? "ok" : "bad");
+  messageEl.hidden = false;
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function loadRoster() {
+  const roster = await fetch("/api/roster").then((r) => r.json());
+  const body = document.querySelector("#roster tbody");
+  document.getElementById("rosterEmpty").hidden = roster.length > 0;
+  body.innerHTML = roster.length
+    ? "<tr><th>Name</th><th>References</th><th>Last seen</th><th></th></tr>" +
+      roster.map((p) => `<tr>
+        <td>${p.name}</td>
+        <td>${p.references_held}</td>
+        <td>${p.last_seen ? new Date(p.last_seen).toLocaleString() : "—"}</td>
+        <td style="text-align:right"><button class="secondary" data-remove="${p.name}">Remove</button></td>
+      </tr>`).join("")
+    : "";
+
+  body.querySelectorAll("[data-remove]").forEach((button) => {
+    button.onclick = async () => {
+      await fetch(`/api/people/${encodeURIComponent(button.dataset.remove)}`, { method: "DELETE" });
+      loadRoster();
+    };
+  });
+}
+
+async function capture() {
+  const name = nameInput.value.trim();
+  if (!name) { say("Enter a name first.", false); return; }
+
+  startButton.disabled = true;
+  thumbs.innerHTML = "";
+  messageEl.hidden = true;
+  const images = [];
+
+  for (const pose of POSES) {
+    promptEl.hidden = false;
+    promptEl.textContent = pose;
+    await wait(1600);
+
+    for (let count = 3; count > 0; count--) {
+      promptEl.textContent = `${pose} — ${count}`;
+      await wait(700);
+    }
+
+    const frame = captureFrame(video, maxEdge, 0.85);
+    images.push(frame);
+
+    const thumb = document.createElement("img");
+    thumb.src = frame;
+    thumbs.appendChild(thumb);
+
+    promptEl.textContent = "Captured";
+    await wait(400);
+  }
+
+  promptEl.hidden = true;
+
+  const response = await fetch("/api/enrol", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, images }),
+  });
+  const data = await response.json();
+
+  if (response.ok) {
+    say(`Enrolled ${data.name} with ${data.references} references. They can check in now.`);
+    nameInput.value = "";
+    loadRoster();
+  } else {
+    say(data.detail || "Enrolment failed.", false);
+  }
+
+  startButton.disabled = false;
+}
+
+(async () => {
+  maxEdge = (await fetch("/api/config").then((r) => r.json())).stream_max_edge;
+  try {
+    await startCamera(video);
+  } catch (err) {
+    say("Camera unavailable: " + err.message, false);
+    startButton.disabled = true;
+  }
+  loadRoster();
+  startButton.onclick = capture;
+})();
+</script>
+</body>
+</html>

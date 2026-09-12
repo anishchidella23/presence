@@ -115,6 +115,19 @@ class Gallery:
 
         return cls(people)
 
+    @classmethod
+    def from_store(cls, store) -> "Gallery":
+        """Build a gallery from the database.
+
+        This is the live path once people are enrolled through the kiosk;
+        `from_directory` remains for bootstrapping from a folder of photos.
+        """
+        people = {
+            name: Person(name=name, embeddings=vectors)
+            for name, vectors in store.load_embeddings().items()
+        }
+        return cls(people)
+
     # --- access ----------------------------------------------------------
 
     @property

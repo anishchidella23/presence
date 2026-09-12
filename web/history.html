@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presence — History</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Presence <span>· history</span></h1>
+  <nav>
+    <a href="/">Kiosk</a>
+    <a href="/enrol">Enrol</a>
+    <a href="/history" class="active">History</a>
+  </nav>
+</header>
+
+<main>
+  <div class="panel">
+    <h2>Check-ins</h2>
+    <p class="hint">
+      Every row is a face that cleared quality, was identified consistently
+      across frames, and answered a randomised liveness challenge.
+    </p>
+    <table id="events"><tbody></tbody></table>
+    <div class="empty" id="empty" hidden>No check-ins recorded yet.</div>
+  </div>
+</main>
+
+<script type="module">
+async function load() {
+  const events = await fetch("/api/events?limit=100").then((r) => r.json());
+  document.getElementById("empty").hidden = events.length > 0;
+  document.querySelector("#events tbody").innerHTML = events.length
+    ? "<tr><th>Name</th><th>When</th><th>Confidence</th><th>Similarity</th><th>Challenges</th></tr>" +
+      events.map((e) => `<tr>
+        <td>${e.name}</td>
+        <td>${new Date(e.at).toLocaleString()}</td>
+        <td>${e.confidence.toFixed(0)}%</td>
+        <td>${e.similarity.toFixed(3)}</td>
+        <td>${e.challenges_passed}</td>
+      </tr>`).join("")
+    : "";
+}
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

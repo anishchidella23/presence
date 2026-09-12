@@ -28,6 +28,7 @@ from enum import Enum
 
 from config import (
     CHALLENGE_COUNT,
+    CHALLENGE_RETRY_S,
     CHALLENGE_TIMEOUT_S,
     MAX_BLINK_REPEATS,
 )
@@ -102,6 +103,7 @@ class ChallengeSession:
 
     def __init__(self, rng: random.Random | None = None, count: int = CHALLENGE_COUNT) -> None:
         self._rng = rng or random.Random()
+        self._count = count
         self._sequence = _draw_sequence(self._rng, count)
         self._index = 0
         self.baseline = Baseline()
@@ -117,6 +119,8 @@ class ChallengeSession:
         self._awaiting_neutral = False
 
         self.failure_reason: str | None = None
+        self._failed_at: float | None = None
+        self.attempts = 1
 
     # --- inspection ------------------------------------------------------
 
@@ -151,8 +155,13 @@ class ChallengeSession:
 
     def update(self, metrics: FaceMetrics, now: float) -> LivenessState:
         """Advance the session by one frame."""
-        if self.state in (LivenessState.PASSED, LivenessState.FAILED):
+        if self.state is LivenessState.PASSED:
             return self.state
+
+        if self.state is LivenessState.FAILED:
+            self._maybe_retry(now)
+            if self.state is LivenessState.FAILED:
+                return self.state
 
         if not metrics.valid:
             return self.state
@@ -177,7 +186,8 @@ class ChallengeSession:
 
         if now > challenge.deadline():
             self.state = LivenessState.FAILED
-            self.failure_reason = "Timed out"
+            self.failure_reason = "Timed out - try again"
+            self._failed_at = now
             return self.state
 
         if self._is_satisfied_this_frame(challenge, metrics):
@@ -193,6 +203,30 @@ class ChallengeSession:
         return self.state
 
     # --- internals -------------------------------------------------------
+
+    def _maybe_retry(self, now: float) -> None:
+        """Restart a failed attempt once the cooldown has elapsed.
+
+        Someone who misread a prompt or glanced away should not have to walk
+        out of frame and return to try again. The retry draws an entirely new
+        sequence, so repeated attempts leak nothing about what comes next.
+
+        The baseline is kept: it describes this person's resting geometry,
+        which a failed challenge says nothing about, and re-measuring it would
+        make every retry slower for no gain.
+        """
+        if self._failed_at is None or now - self._failed_at < CHALLENGE_RETRY_S:
+            return
+
+        self._sequence = _draw_sequence(self._rng, self._count)
+        self._index = 0
+        self._eyes_were_closed = False
+        self._awaiting_neutral = False
+        self.failure_reason = None
+        self._failed_at = None
+        self.attempts += 1
+        self.state = LivenessState.ACTIVE
+        self._issue_next(now)
 
     def _collect_baseline(self, metrics: FaceMetrics, now: float) -> None:
         # Only neutral frames belong in a resting baseline; sampling while the

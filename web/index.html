@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presence — Kiosk</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Presence <span>· check-in</span></h1>
+  <nav>
+    <a href="/" class="active">Kiosk</a>
+    <a href="/enrol">Enrol</a>
+    <a href="/history">History</a>
+  </nav>
+</header>
+
+<main>
+  <div class="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div class="prompt" id="prompt" hidden></div>
+  </div>
+
+  <div class="statusbar">
+    <span><span class="dot" id="dot"></span><span id="connection">connecting…</span></span>
+    <span id="stats"></span>
+    <span id="enrolled"></span>
+  </div>
+
+  <div class="message bad" id="error" hidden></div>
+</main>
+
+<script type="module">
+import { startCamera, captureFrame, fitCanvasToVideo } from "/static/camera.js";
+import { drawFaces, activeFace } from "/static/overlay.js";
+
+const video = document.getElementById("video");
+const overlay = document.getElementById("overlay");
+const promptEl = document.getElementById("prompt");
+const dot = document.getElementById("dot");
+const connection = document.getElementById("connection");
+const stats = document.getElementById("stats");
+const enrolled = document.getElementById("enrolled");
+const errorEl = document.getElementById("error");
+
+let maxEdge = 720;
+
+function fail(message) {
+  errorEl.textContent = message;
+  errorEl.hidden = false;
+}
+
+function showPrompt(result) {
+  const face = activeFace(result);
+  if (!face || !["challenged", "verified", "spoof_suspected"].includes(face.state)) {
+    promptEl.hidden = true;
+    return;
+  }
+  promptEl.hidden = false;
+  promptEl.className = "prompt" +
+    (face.state === "verified" ? " passed" : face.state === "spoof_suspected" ? " failed" : "");
+  promptEl.textContent = face.state === "verified"
+    ? `${face.name} — checked in`
+    : face.state === "spoof_suspected"
+      ? face.detail
+      : `${face.prompt}  ·  ${face.challenges_passed}/${face.challenges_total}`;
+}
+
+async function main() {
+  try {
+    const config = await fetch("/api/config").then((r) => r.json());
+    maxEdge = config.stream_max_edge;
+    const roster = await fetch("/api/roster").then((r) => r.json());
+    enrolled.textContent = roster.length
+      ? `${roster.length} enrolled`
+      : "nobody enrolled yet — visit Enrol";
+  } catch {
+    fail("Could not reach the server.");
+    return;
+  }
+
+  try {
+    await startCamera(video);
+  } catch (err) {
+    fail("Camera unavailable: " + err.message + ". Grant camera access and reload.");
+    return;
+  }
+
+  const socket = new WebSocket(`ws://${location.host}/ws/verify`);
+
+  socket.onopen = () => {
+    dot.classList.add("live");
+    connection.textContent = "live";
+    send();
+  };
+  socket.onclose = () => {
+    dot.classList.remove("live");
+    connection.textContent = "disconnected — reload to reconnect";
+    promptEl.hidden = true;
+  };
+  socket.onerror = () => fail("Lost the connection to the verification service.");
+
+  // One frame in flight at a time. Waiting for each verdict before capturing
+  // again paces the stream to whatever the server can keep up with, instead of
+  // queueing frames that are already stale by the time they are processed.
+  function send() {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    if (!video.videoWidth) { requestAnimationFrame(send); return; }
+    socket.send(captureFrame(video, maxEdge));
+  }
+
+  socket.onmessage = (event) => {
+    const result = JSON.parse(event.data);
+    if (result.error) { send(); return; }
+
+    fitCanvasToVideo(overlay, video);
+    drawFaces(overlay, result);
+    showPrompt(result);
+    stats.textContent =
+      `${result.elapsed_ms.toFixed(0)} ms · ${result.faces.length} face${result.faces.length === 1 ? "" : "s"}`;
+
+    requestAnimationFrame(send);
+  };
+}
+
+main();
+</script>
+</body>
+</html>

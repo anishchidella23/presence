@@ -25,7 +25,9 @@ from config import (
     BASELINE_SAMPLES,
     BLINK_CLOSE_RATIO,
     BLINK_OPEN_RATIO,
-    EYE_LANDMARK_COUNT,
+    LEFT_EYE_LANDMARKS,
+    MAX_PLAUSIBLE_EYE_OPENNESS,
+    RIGHT_EYE_LANDMARKS,
     SMILE_RISE_RATIO,
     YAW_TURN_DEGREES,
 )
@@ -45,23 +47,40 @@ class FaceMetrics:
         return self.eye_openness > 0.0 and self.smile_ratio > 0.0
 
 
-def _eye_openness(landmarks: np.ndarray, eye_point: np.ndarray) -> float:
-    """Openness of the eye nearest a given keypoint.
+def _eye_openness(contour: np.ndarray) -> float:
+    """How far apart the eyelids are, relative to the width of the eye.
 
-    Takes the landmarks closest to the detector's eye keypoint and measures the
-    vertical extent of that cluster against its horizontal extent. Using the
-    cluster's bounding extents rather than named landmark indices keeps this
-    from depending on a published index map that varies between model packs.
+    This is the eye aspect ratio generalised. The corners of the eye are the
+    two contour points furthest apart; the line between them is the eye's own
+    axis. Eyelid separation is then the mean distance of the remaining points
+    from that axis, and dividing by the corner distance makes the result
+    invariant to both scale and head roll.
 
-    This is the eye aspect ratio in spirit: eyelids closing collapses the
-    vertical extent while the corners stay put, so the ratio drops sharply.
+    Measuring against the eye's own axis rather than the bounding box matters:
+    a bounding box is decided by whichever single landmark happens to sit
+    furthest out, so one stray point on a poorly-fitted face inflates the
+    result without bound. Averaging over all the lid points instead means a
+    single bad landmark shifts the answer slightly rather than dominating it.
     """
-    distances = np.linalg.norm(landmarks - eye_point, axis=1)
-    cluster = landmarks[np.argsort(distances)[:EYE_LANDMARK_COUNT]]
+    if len(contour) < 4:
+        return 0.0
 
-    height = float(cluster[:, 1].max() - cluster[:, 1].min())
-    width = float(cluster[:, 0].max() - cluster[:, 0].min())
-    return height / width if width > 0 else 0.0
+    # The two points furthest apart along the contour are the eye corners.
+    separations = np.linalg.norm(contour[:, None, :] - contour[None, :, :], axis=-1)
+    first, second = np.unravel_index(np.argmax(separations), separations.shape)
+    corner_a, corner_b = contour[first], contour[second]
+
+    width = float(np.linalg.norm(corner_b - corner_a))
+    if width <= 0:
+        return 0.0
+
+    # Perpendicular distance of every remaining point from the corner axis.
+    axis = (corner_b - corner_a) / width
+    normal = np.array([-axis[1], axis[0]])
+    lids = np.delete(contour, [first, second], axis=0)
+    separation = float(np.mean(np.abs((lids - corner_a) @ normal)))
+
+    return separation / width
 
 
 def measure(
@@ -77,12 +96,25 @@ def measure(
     if landmarks_2d is None or keypoints is None or len(keypoints) < 5:
         return FaceMetrics(0.0, 0.0, 0.0, 0.0)
 
+    if len(landmarks_2d) <= max(RIGHT_EYE_LANDMARKS):
+        return FaceMetrics(0.0, 0.0, 0.0, 0.0)
+
     left_eye, right_eye = keypoints[0], keypoints[1]
     left_mouth, right_mouth = keypoints[3], keypoints[4]
 
     openness = (
-        _eye_openness(landmarks_2d, left_eye) + _eye_openness(landmarks_2d, right_eye)
+        _eye_openness(landmarks_2d[LEFT_EYE_LANDMARKS])
+        + _eye_openness(landmarks_2d[RIGHT_EYE_LANDMARKS])
     ) / 2.0
+
+    # A human eye contour is far wider than it is tall, so a ratio near or
+    # above one means the landmark fit has collapsed - usually a small,
+    # steeply-angled or partly occluded face. Such a reading is not merely
+    # imprecise, it is actively harmful: folded into a resting baseline it
+    # raises the "eyes open" bar beyond what a real open eye can reach, and
+    # the person can then never satisfy a challenge. Discard the frame.
+    if openness > MAX_PLAUSIBLE_EYE_OPENNESS:
+        return FaceMetrics(0.0, 0.0, 0.0, 0.0)
 
     # Inter-ocular distance is the standard normaliser for facial measurement:
     # it is stable under expression, which mouth and jaw distances are not.

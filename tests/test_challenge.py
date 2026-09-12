@@ -87,7 +87,7 @@ def test_a_challenge_not_answered_in_time_fails():
     s.update(NEUTRAL, t + CHALLENGE_TIMEOUT_S + 1.0)
 
     assert s.state is LivenessState.FAILED
-    assert s.failure_reason == "Timed out"
+    assert "Timed out" in s.failure_reason
 
 
 def test_a_passed_session_is_terminal():
@@ -214,4 +214,72 @@ def test_invalid_geometry_is_ignored_rather_than_advancing_state():
     for i in range(20):
         s.update(blank, t + i * 0.1)
 
+    assert s.state is LivenessState.ACTIVE
+
+
+# --- recovery from a failed attempt --------------------------------------
+
+
+def test_a_failed_attempt_restarts_after_a_cooldown():
+    """Someone who misread a prompt should not have to walk away and return."""
+    from config import CHALLENGE_RETRY_S
+
+    s = session_with(ChallengeKind.SMILE)
+    t = establish_baseline(s)
+
+    s.update(NEUTRAL, t + CHALLENGE_TIMEOUT_S + 1.0)
+    assert s.state is LivenessState.FAILED
+
+    failed_at = t + CHALLENGE_TIMEOUT_S + 1.0
+    s.update(NEUTRAL, failed_at + CHALLENGE_RETRY_S + 0.1)
+
+    assert s.state is LivenessState.ACTIVE
+    assert s.attempts == 2
+    assert s.failure_reason is None
+
+
+def test_a_failure_holds_until_the_cooldown_elapses():
+    """A failure that vanished instantly would never be read."""
+    s = session_with(ChallengeKind.SMILE)
+    t = establish_baseline(s)
+
+    failed_at = t + CHALLENGE_TIMEOUT_S + 1.0
+    s.update(NEUTRAL, failed_at)
+    s.update(NEUTRAL, failed_at + 0.5)
+
+    assert s.state is LivenessState.FAILED
+
+
+def test_a_retry_draws_a_fresh_sequence():
+    """Repeated attempts must not leak what comes next."""
+    from config import CHALLENGE_RETRY_S
+
+    sequences = set()
+    for seed in range(30):
+        s = ChallengeSession(rng=random.Random(seed))
+        t = establish_baseline(s)
+        first = tuple((c.kind, c.target) for c in s._sequence)
+
+        s.update(NEUTRAL, t + CHALLENGE_TIMEOUT_S + 1.0)
+        s.update(NEUTRAL, t + CHALLENGE_TIMEOUT_S + 1.0 + CHALLENGE_RETRY_S + 0.1)
+
+        sequences.add((first, tuple((c.kind, c.target) for c in s._sequence)))
+
+    differing = sum(1 for a, b in sequences if a != b)
+    assert differing > len(sequences) / 2, "retries mostly repeated the same sequence"
+
+
+def test_baseline_survives_a_retry():
+    """Re-measuring resting geometry would slow every retry for no gain."""
+    from config import CHALLENGE_RETRY_S
+
+    s = session_with(ChallengeKind.SMILE)
+    t = establish_baseline(s)
+    resting = s.baseline.eye_open
+
+    failed_at = t + CHALLENGE_TIMEOUT_S + 1.0
+    s.update(NEUTRAL, failed_at)
+    s.update(NEUTRAL, failed_at + CHALLENGE_RETRY_S + 0.1)
+
+    assert s.baseline.eye_open == resting
     assert s.state is LivenessState.ACTIVE

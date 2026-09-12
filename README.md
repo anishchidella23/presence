@@ -55,15 +55,24 @@ and smile tests are expressed as fractions of it.
 
 **Multiple reference images per person.** A single enrolment photo pins an
 identity to one pose and one lighting condition, and everything that deviates
-from it scores lower. Enrolment captures several frames across poses.
+from it scores lower. Enrolment captures several frames across poses and stores
+each as its own reference, rather than averaging them into one vector that
+represents no pose particularly well.
+
+**SQLite, not a CSV log.** Presence is a question with a shape — who is
+enrolled, when did they arrive, were they here yesterday. A flat file answers
+none of those without being parsed back into a database anyway, and it cannot
+express that the same person passing the camera twice in an hour is one arrival
+rather than two.
 
 ## Status
 
-Working: detection, embedding, gallery matching with the margin rule,
-multi-face tracking with stable IDs, quality gates, temporal smoothing,
-randomised challenge-response liveness, and threshold calibration.
+Working end to end. Enrol someone through the browser, stand in front of the
+kiosk, answer the challenge, and the check-in lands in SQLite.
 
-In progress: SQLite persistence, the web kiosk, and the evaluation harness.
+Still to come: the evaluation harness, and a performance pass — recognition
+currently runs at roughly 5 fps for one face and slower for several, which is
+usable but not yet comfortable.
 
 ## Running it
 
@@ -72,27 +81,27 @@ Requires Python 3.13.
 ```bash
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
+./.venv/bin/python -m server.app
 ```
 
-Enrol someone by dropping reference images into `data/faces/`, either one image
-per person or a folder per person:
+Then open <http://127.0.0.1:8000>. Model weights (~300MB) download on first run.
 
-```
-data/faces/Alice/front.jpg
-data/faces/Alice/left.jpg
-data/faces/Bob.jpg
-```
+- **Enrol** captures you across five head positions and stores each as its own
+  reference.
+- **Kiosk** is the check-in screen: stand in front of it and answer the prompt.
+- **History** lists every check-in with the confidence behind it.
 
-Then run the pipeline over a still image:
+The browser owns the camera and all rendering; the server owns the pipeline.
+Frames are paced request-response — the page sends one frame and waits for its
+verdict before capturing the next — so a slow frame delays the next capture
+instead of building a backlog of frames that are already wrong by the time they
+are processed.
+
+There is also a headless path for debugging a specific image:
 
 ```bash
 ./.venv/bin/python -m engine.demo photo.jpg --repeat 6
 ```
-
-`--repeat` feeds the same frame several times so temporal smoothing can reach a
-stable identity, simulating a face persisting across a run of frames.
-
-Model weights (~300MB) download automatically on first run.
 
 ## Tests
 
@@ -111,16 +120,24 @@ does not count, that one long blink counts once rather than many times, that a
 single held pose cannot satisfy two consecutive challenges, and that the
 sequence is genuinely unpredictable.
 
+`tests/test_integration.py` runs the whole pipeline over real photographs,
+simulating a cooperative user by responding to whichever challenge it is
+actually asked. It proves both directions: a person who answers is verified and
+logged, and a static photo is recognised perfectly well yet never logged. It
+needs photographs, which are personal data and are not committed, so it skips
+unless `PRESENCE_TEST_FRAMES` points at a directory of them — see that module's
+docstring.
+
 ## Layout
 
 ```
 config.py     every tunable threshold, in one place
-engine/       detection, matching, tracking, gating, liveness — no UI
+engine/       detection, matching, tracking, gating, liveness, storage — no UI
 tools/        threshold calibration
 server/       FastAPI kiosk: websocket frames in, verdicts out
 web/          browser UI, canvas overlay
 eval/         labelled set and metrics
-tests/        decision-logic tests
+tests/        decision-logic tests, plus an end-to-end integration test
 ```
 
 ## Calibration
