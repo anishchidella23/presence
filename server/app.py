@@ -15,9 +15,11 @@ processed.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import logging
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import MIN_ENROLMENT_IMAGES, STREAM_MAX_EDGE
+from engine.detector import FaceDetector
 from engine.gallery import Gallery
 from engine.pipeline import PresencePipeline
 from engine.store import Store
@@ -41,30 +44,46 @@ WEB_DIR = Path(__file__).parent.parent / "web"
 class Kiosk:
     """Long-lived objects shared by every request.
 
-    The detector loads several hundred megabytes of model, so it is built once
-    at startup rather than per connection.
+    Only the stateless, expensive pieces live here: the detector, which loads
+    several hundred megabytes of model, and the gallery. Tracking and liveness
+    state belong to a single visitor, so each connection gets its own pipeline
+    (see `new_pipeline`) rather than sharing one that every new arrival would
+    reset out from under whoever was already mid-challenge.
     """
 
     def __init__(self) -> None:
         self.store = Store()
-        self.pipeline = PresencePipeline(gallery=Gallery.from_store(self.store))
-        self.pipeline.on_verified = self._on_verified
+        self.detector = FaceDetector()
+        self.gallery = Gallery.from_store(self.store)
         self.last_logged: dict[str, bool] = {}
+        # Pipelines run in worker threads and share one SQLite connection.
+        self._store_lock = threading.Lock()
+
+    def new_pipeline(self) -> PresencePipeline:
+        pipeline = PresencePipeline(detector=self.detector, gallery=self.gallery)
+        pipeline.on_verified = self._on_verified
+        return pipeline
 
     def _on_verified(self, name: str, result) -> None:
-        """Called by the pipeline the moment someone passes liveness."""
-        written = self.store.log_presence(
-            name=name,
-            confidence=result.confidence,
-            similarity=result.similarity,
-            challenges_passed=result.challenges_passed,
-        )
+        """Called by a pipeline the moment someone passes liveness."""
+        with self._store_lock:
+            written = self.store.log_presence(
+                name=name,
+                confidence=result.confidence,
+                similarity=result.similarity,
+                challenges_passed=result.challenges_passed,
+            )
         self.last_logged[name] = written
         log.info("%s verified (%s)", name, "logged" if written else "already logged today")
 
     def reload_gallery(self) -> None:
-        """Rebuild the gallery after enrolment so a new face works immediately."""
-        self.pipeline.gallery = Gallery.from_store(self.store)
+        """Rebuild the gallery after enrolment.
+
+        Open connections pick up the new gallery on their next frame, so a
+        person enrolled mid-session can check in without anyone reconnecting.
+        """
+        with self._store_lock:
+            self.gallery = Gallery.from_store(self.store)
 
 
 kiosk: Kiosk | None = None
@@ -76,7 +95,7 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     log.info("loading models")
     kiosk = Kiosk()
-    log.info("kiosk ready: %d enrolled", len(kiosk.pipeline.gallery))
+    log.info("kiosk ready: %d enrolled", len(kiosk.gallery))
     yield
     kiosk.store.close()
 
@@ -153,7 +172,7 @@ def enrol(request: EnrolRequest) -> JSONResponse:
         if frame is None:
             rejected.append(f"frame {index + 1}: could not be decoded")
             continue
-        embedding = kiosk.pipeline.detector.embed_crop(frame)
+        embedding = kiosk.detector.embed_crop(frame)
         if embedding is None:
             rejected.append(f"frame {index + 1}: no face found")
             continue
@@ -195,9 +214,10 @@ def client_config() -> JSONResponse:
 @app.websocket("/ws/verify")
 async def verify(socket: WebSocket) -> None:
     await socket.accept()
-    # Each connection gets its own tracker: a new kiosk session should not
-    # inherit half-finished liveness challenges from the previous visitor.
-    kiosk.pipeline.reset_tracking()
+    # A pipeline per connection: tracks and liveness challenges belong to the
+    # person at this kiosk, and must neither leak to nor be reset by anyone
+    # else who connects.
+    pipeline = kiosk.new_pipeline()
 
     try:
         while True:
@@ -206,7 +226,11 @@ async def verify(socket: WebSocket) -> None:
                 await socket.send_json({"error": "undecodable frame"})
                 continue
 
-            result = kiosk.pipeline.process(frame)
+            pipeline.gallery = kiosk.gallery
+            # Inference is CPU-bound and takes a sizeable fraction of a second.
+            # Run inline, it would stall the event loop and every other
+            # connection with it.
+            result = await asyncio.to_thread(pipeline.process, frame)
             payload = result.to_dict()
             payload["logged"] = {
                 face.name: kiosk.last_logged.get(face.name, False)

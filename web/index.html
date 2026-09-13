@@ -88,7 +88,10 @@ async function main() {
     return;
   }
 
-  const socket = new WebSocket(`ws://${location.host}/ws/verify`);
+  // Match the page's own scheme: an HTTPS page may not open a plain ws://
+  // socket, so a hardcoded scheme works locally and fails once deployed.
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  const socket = new WebSocket(`${scheme}://${location.host}/ws/verify`);
 
   socket.onopen = () => {
     dot.classList.add("live");

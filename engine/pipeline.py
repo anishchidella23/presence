@@ -54,15 +54,6 @@ class PresencePipeline:
         # storage.
         self.on_verified = None
 
-    def reset_tracking(self) -> None:
-        """Forget every track.
-
-        Called when a new kiosk session starts, so an arriving visitor is not
-        handed the half-finished liveness challenge of whoever stood there
-        before them.
-        """
-        self.tracker = FaceTracker()
-
     def process(self, frame_bgr: np.ndarray, now: float | None = None) -> FrameResult:
         """Process one frame and return the state of every face in it."""
         started = time.perf_counter()
