@@ -143,7 +143,7 @@ button:hover { filter: brightness(1.08); }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
 
-input[type="text"] {
+input[type="text"], input[type="password"] {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
@@ -168,5 +168,5 @@ input[type="text"] {
 @media (max-width: 640px) {
   main { padding: 16px; }
   header { padding: 12px 16px; gap: 12px; }
-  input[type="text"] { width: 100%; }
+  input[type="text"], input[type="password"] { width: 100%; }
 }

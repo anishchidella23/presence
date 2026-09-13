@@ -5,16 +5,21 @@ than hunted down across modules. Values marked PROVISIONAL are starting points
 that get replaced by measured values once the evaluation harness exists.
 """
 
+import os
 from pathlib import Path
 
 # --- Paths ---------------------------------------------------------------
 
 ROOT = Path(__file__).parent
-DATA_DIR = ROOT / "data"
+
+# Both overridable so a deployment can put them on a persistent volume: the
+# database must survive restarts, and the ~300MB of model weights should be
+# downloaded once rather than on every boot.
+DATA_DIR = Path(os.environ.get("PRESENCE_DATA_DIR") or ROOT / "data")
 FACES_DIR = DATA_DIR / "faces"        # enrolled reference images, per person
 CAPTURES_DIR = DATA_DIR / "captures"  # frames saved during enrollment
 DB_PATH = DATA_DIR / "presence.db"
-MODEL_ROOT = ROOT / "models"
+MODEL_ROOT = Path(os.environ.get("PRESENCE_MODEL_DIR") or ROOT / "models")
 
 
 # --- Detection / recognition model --------------------------------------
@@ -178,10 +183,26 @@ MIN_ENROLMENT_IMAGES = 3
 
 # --- Server --------------------------------------------------------------
 
-HOST = "127.0.0.1"
-PORT = 8000
+# Hosting platforms assign the port through $PORT.
+HOST = os.environ.get("HOST", "127.0.0.1")
+PORT = int(os.environ.get("PORT", "8000"))
 
 # Longest edge the browser downscales to before sending a frame. Recognition
 # works from a face of roughly 100px, so sending full resolution spends
 # bandwidth and inference time on detail that is discarded anyway.
 STREAM_MAX_EDGE = 720
+
+
+# --- Access --------------------------------------------------------------
+
+# The one password protecting every page, API call and websocket. With none
+# set, the server only agrees to listen on this machine's loopback address.
+PASSWORD = os.environ.get("PRESENCE_PASSWORD") or None
+
+# Signs session cookies. Optional: without it a random key is generated per
+# process, which just means devices sign in again after a restart.
+SESSION_SECRET = os.environ.get("PRESENCE_SECRET") or None
+
+# A kiosk is a fixed device that should not be asking for a password every
+# morning, so sessions are long.
+SESSION_MAX_AGE_S = 30 * 24 * 60 * 60

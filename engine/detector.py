@@ -41,6 +41,11 @@ class FaceDetector:
             providers=["CPUExecutionProvider"],
         )
         self._app.prepare(ctx_id=0, det_size=det_size)
+
+        # The pack arrives as a zip, is extracted beside itself, and is never
+        # read again. It is nearly half the footprint, which matters on a
+        # size-limited deployment volume.
+        (MODEL_ROOT / "models" / f"{MODEL_PACK}.zip").unlink(missing_ok=True)
         log.info("detector ready")
 
     def detect(self, frame_bgr: np.ndarray) -> list[Detection]:

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presence — Sign in</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Presence <span>· sign in</span></h1>
+</header>
+
+<main style="max-width: 420px">
+  <div class="panel">
+    <h2>Sign in</h2>
+    <p class="hint">This kiosk holds enrolled faces and check-in history, so it is only available to whoever runs it.</p>
+    <form method="post" action="/login" class="row">
+      <input type="password" name="password" placeholder="Password" autocomplete="current-password" autofocus required>
+      <input type="hidden" name="next" id="next">
+      <button type="submit">Sign in</button>
+    </form>
+    <div class="message bad" id="error" hidden></div>
+  </div>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+document.getElementById("next").value = params.get("next") || "/";
+const messages = {
+  wrong: "That password is not right.",
+  unset: "The server has no PRESENCE_PASSWORD configured, so nobody can sign in. Set it and restart.",
+};
+const error = messages[params.get("error")];
+if (error) {
+  const el = document.getElementById("error");
+  el.textContent = error;
+  el.hidden = false;
+}
+</script>
+</body>
+</html>

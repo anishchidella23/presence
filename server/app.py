@@ -22,19 +22,27 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from config import MIN_ENROLMENT_IMAGES, STREAM_MAX_EDGE
+from config import (
+    MIN_ENROLMENT_IMAGES,
+    PASSWORD,
+    SESSION_MAX_AGE_S,
+    SESSION_SECRET,
+    STREAM_MAX_EDGE,
+)
 from engine.detector import FaceDetector
 from engine.gallery import Gallery
 from engine.pipeline import PresencePipeline
 from engine.store import Store
+from server.auth import COOKIE_NAME, Auth, safe_next, same_origin
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +110,83 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Presence", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+
+
+# --- access control ------------------------------------------------------
+
+auth = Auth(PASSWORD, SESSION_SECRET, SESSION_MAX_AGE_S)
+
+# Reachable without signing in. None of them reveal enrolled people or history.
+PUBLIC_PATHS = {"/login", "/healthz"}
+
+# Each wrong password costs this long, to slow guessing at the single secret.
+FAILED_LOGIN_DELAY_S = 1.0
+
+
+def signed_in(connection) -> bool:
+    """Whether a request or websocket carries a valid session.
+
+    `open_access` is set only by `serve()`, and only when no password is
+    configured and the server is bound to loopback, so a local development run
+    needs no login. Anything that starts the app another way gets the locked
+    default.
+    """
+    if getattr(connection.app.state, "open_access", False):
+        return True
+    return auth.valid(connection.cookies.get(COOKIE_NAME))
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS or path.startswith("/static/") or signed_in(request):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "Sign in required"}, status_code=401)
+    return RedirectResponse(f"/login?next={quote(path)}", status_code=303)
+
+
+@app.get("/login")
+def login_page() -> FileResponse:
+    return FileResponse(WEB_DIR / "login.html")
+
+
+@app.post("/login")
+async def login(request: Request):
+    form = await request.form()
+    target = safe_next(form.get("next"))
+
+    if not auth.check_password(str(form.get("password", ""))):
+        await asyncio.sleep(FAILED_LOGIN_DELAY_S)
+        reason = "wrong" if auth.configured else "unset"
+        return RedirectResponse(f"/login?error={reason}&next={quote(target)}", status_code=303)
+
+    response = RedirectResponse(target, status_code=303)
+    response.set_cookie(
+        COOKIE_NAME,
+        auth.issue(),
+        max_age=auth.max_age_s,
+        httponly=True,
+        samesite="lax",
+        # TLS usually ends at the hosting platform's proxy, so the app itself
+        # sees plain HTTP and has to learn the real scheme from the proxy.
+        secure=request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto") == "https",
+    )
+    return response
+
+
+@app.get("/logout")
+def logout() -> RedirectResponse:
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(COOKIE_NAME)
+    return response
+
+
+@app.get("/healthz")
+def healthz() -> JSONResponse:
+    """For the hosting platform's health check. Answers only once models are loaded."""
+    return JSONResponse({"ok": True})
 
 
 def decode_frame(payload: str) -> np.ndarray | None:
@@ -213,6 +298,13 @@ def client_config() -> JSONResponse:
 
 @app.websocket("/ws/verify")
 async def verify(socket: WebSocket) -> None:
+    # HTTP middleware never sees websocket handshakes, so the check lives here.
+    if not signed_in(socket) or not same_origin(
+        socket.headers.get("origin"), socket.headers.get("host")
+    ):
+        await socket.close(code=1008)
+        return
+
     await socket.accept()
     # A pipeline per connection: tracks and liveness challenges belong to the
     # person at this kiosk, and must neither leak to nor be reset by anyone
@@ -248,7 +340,17 @@ async def verify(socket: WebSocket) -> None:
 def serve() -> None:
     import uvicorn
 
-    from config import HOST, PORT
+    from config import HOST, PASSWORD, PORT
+
+    if PASSWORD is None:
+        if HOST not in {"127.0.0.1", "localhost", "::1"}:
+            raise SystemExit(
+                f"Refusing to listen on {HOST} without PRESENCE_PASSWORD set: "
+                "the kiosk would expose enrolled faces and check-in history to "
+                "anyone who can reach it."
+            )
+        # Local development: no password, reachable only from this machine.
+        app.state.open_access = True
 
     uvicorn.run(app, host=HOST, port=PORT, log_level="info")
 

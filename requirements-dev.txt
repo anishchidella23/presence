@@ -1,1 +1,3 @@
 pytest==9.0.2
+# FastAPI's TestClient, for the login-gate tests
+httpx==0.28.1

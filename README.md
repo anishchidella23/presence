@@ -85,6 +85,7 @@ python3 -m venv .venv
 ```
 
 Then open <http://127.0.0.1:8000>. Model weights (~300MB) download on first run.
+Locally no password is needed; the server only listens on this machine.
 
 - **Enrol** captures you across five head positions and stores each as its own
   reference.
@@ -102,6 +103,42 @@ There is also a headless path for debugging a specific image:
 ```bash
 ./.venv/bin/python -m engine.demo photo.jpg --repeat 6
 ```
+
+## Deploying
+
+The server needs a long-running process and a disk that survives restarts: the
+gallery lives in SQLite, and the models should download once rather than on
+every boot. That rules out serverless platforms such as Vercel, whose
+filesystem is read-only and per-instance, so enrolments would vanish and
+instances would disagree about who is enrolled.
+
+A `Dockerfile` is included and runs on any container host with a volume. On
+Railway:
+
+1. Create a project from this GitHub repository. The Dockerfile is detected
+   automatically.
+2. Attach a volume mounted at `/data`. The database and model weights live
+   there.
+3. Set `PRESENCE_PASSWORD` to a long password, and `PRESENCE_SECRET` to a
+   random string so sign-ins survive redeploys.
+4. Generate a public domain, and set the health check path to `/healthz`.
+
+The first boot downloads the models onto the volume, so it takes noticeably
+longer than later ones.
+
+**Every page, API call and websocket requires signing in.** A kiosk that answers
+"who is this face?" with a name would otherwise be an identity oracle for anyone
+holding the URL — hold up a photo of a stranger and learn whether they are
+enrolled and what they are called. The server refuses to listen on a public
+interface at all unless `PRESENCE_PASSWORD` is set.
+
+| Variable | Purpose |
+|---|---|
+| `PRESENCE_PASSWORD` | Required for any non-local deployment |
+| `PRESENCE_SECRET` | Signs session cookies; without it, devices sign in again after each restart |
+| `PRESENCE_DATA_DIR` | Database location (the image sets `/data`) |
+| `PRESENCE_MODEL_DIR` | Model weights location (the image sets `/data/models`) |
+| `PORT` | Set by the hosting platform |
 
 ## Tests
 
@@ -132,6 +169,7 @@ docstring.
 
 ```
 config.py     every tunable threshold, in one place
+Dockerfile    container image for deployment
 engine/       detection, matching, tracking, gating, liveness, storage — no UI
 tools/        threshold calibration
 server/       FastAPI kiosk: websocket frames in, verdicts out
