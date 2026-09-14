@@ -117,14 +117,16 @@ Railway:
 
 1. Create a project from this GitHub repository. The Dockerfile is detected
    automatically.
-2. Attach a volume mounted at `/data`. The database and model weights live
-   there.
+2. Attach a volume mounted at `/data`. The database lives there.
 3. Set `PRESENCE_PASSWORD` to a long password, and `PRESENCE_SECRET` to a
    random string so sign-ins survive redeploys.
 4. Generate a public domain, and set the health check path to `/healthz`.
 
-The first boot downloads the models onto the volume, so it takes noticeably
-longer than later ones.
+Model weights are built into the image, so the volume holds only the database.
+Downloading them at runtime instead needs the zip and its extraction on disk at
+once — about 610MB — which overflows Railway's 0.5GB trial volumes. Worse,
+insightface treats any existing model directory as a finished download, so an
+extraction cut short by a full disk crashes every restart after it.
 
 **Every page, API call and websocket requires signing in.** A kiosk that answers
 "who is this face?" with a name would otherwise be an identity oracle for anyone
@@ -137,7 +139,7 @@ interface at all unless `PRESENCE_PASSWORD` is set.
 | `PRESENCE_PASSWORD` | Required for any non-local deployment |
 | `PRESENCE_SECRET` | Signs session cookies; without it, devices sign in again after each restart |
 | `PRESENCE_DATA_DIR` | Database location (the image sets `/data`) |
-| `PRESENCE_MODEL_DIR` | Model weights location (the image sets `/data/models`) |
+| `PRESENCE_MODEL_DIR` | Model weights location (the image bakes them into `/opt/models`) |
 | `PORT` | Set by the hosting platform |
 
 ## Tests
